@@ -5,7 +5,7 @@ import torch.nn as nn
 class FightDetection(nn.Module):
     def __init__(
         self, 
-        hidden: list=[2304, 2048, 1024, 512, 256],
+        hidden: list=[400, 256, 128, 64],
         dropout: float=0.2,
     ):
         super(FightDetection, self).__init__()
@@ -51,21 +51,15 @@ class FightDetection(nn.Module):
         self.pretrained_model = self.pretrained_model.eval()
 
         self.feature_extractor = nn.Sequential(
-            *list(self.pretrained_model.blocks[:6])
+            *list(self.pretrained_model.blocks[:])
         )
 
-        for param in self.feature_extractor.parameters():
+        for param in self.feature_extractor[:5].parameters():
             param.requires_grad = False
 
     def _classifier_generator(self):
-        layer_list = [
-            nn.AdaptiveAvgPool3d((1, 1, 1)),
-            nn.Flatten(),
-            nn.Dropout(p=self.dropout),
-        ]
-        layer_list.extend(list(self._generate_layers(self.hidden)))
         self.classifier = nn.Sequential(
-            *layer_list,
+            *list(self._generate_layers(self.hidden)),
             nn.Linear(self.hidden[-1], 1)
         )
 
@@ -79,6 +73,6 @@ class FightDetection(nn.Module):
             idx += 1
 
     def _assert_arg_error(self):
-        CONDITION = (self.hidden[0] == 2304)
-        ERROR_MESSAGE = f"First MLP input dim must be 2304, but got {self.hidden[0]}"
+        CONDITION = (self.hidden[0] == 400)
+        ERROR_MESSAGE = f"First MLP input dim must be 400, but got {self.hidden[0]}"
         assert CONDITION, ERROR_MESSAGE
