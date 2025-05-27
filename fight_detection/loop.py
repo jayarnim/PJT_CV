@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torchmetrics.classification import BinaryAccuracy
 import torch.optim as optim
-from torch.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler, autocast
 
 
 class Loop(nn.Module):
@@ -19,6 +19,7 @@ class Loop(nn.Module):
         super(Loop, self).__init__()
         # device setting
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.use_amp = self.device.type=='cuda'
 
         # global attr
         self.model = model.to(self.device)
@@ -134,7 +135,7 @@ class Loop(nn.Module):
                 labels=labels.to(self.device),
             )
             # forward pass
-            with autocast(self.device.type):
+            with autocast(self.use_amp):
                 self.optimizer.zero_grad()
                 batch_loss = self._batch(**kwargs)
             # accumulate loss
@@ -162,7 +163,7 @@ class Loop(nn.Module):
                     labels=labels.to(self.device),
                 )
                 # forward pass
-                with autocast(self.device.type):
+                with autocast(self.use_amp):
                     batch_loss = self._batch(**kwargs)
                 # accumulate loss
                 epoch_loss += batch_loss.item()
