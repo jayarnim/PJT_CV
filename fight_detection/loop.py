@@ -1,14 +1,23 @@
 from tqdm import tqdm
+import copy
 from IPython.display import clear_output
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 import torch
 import torch.nn as nn
-from torchmetrics.classification import BinaryAccuracy
+from torchmetrics.classification import (
+    BinaryAccuracy, 
+    BinaryPrecision, 
+    BinaryRecall,
+    BinaryF1Score, 
+    BinaryConfusionMatrix
+)
 import torch.optim as optim
 from torch.cuda.amp import GradScaler, autocast
 
 
-class Loop(nn.Module):
+class TrainingLoop(nn.Module):
     def __init__(
         self, 
         model, 
@@ -16,7 +25,7 @@ class Loop(nn.Module):
         lambda_: float=1e-2, 
         threshold: float=0.5,
     ):
-        super(Loop, self).__init__()
+        super(TrainingLoop, self).__init__()
         # device setting
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.use_amp = self.device.type=='cuda'
@@ -31,7 +40,7 @@ class Loop(nn.Module):
         self.criterion = nn.BCEWithLogitsLoss()
 
         # Metric
-        self.metric = BinaryAccuracy(threshold=self.threshold)
+        self.metric = BinaryRecall(threshold=self.threshold)
         self.metric.to(self.device)
 
         # Optimizer
@@ -88,7 +97,7 @@ class Loop(nn.Module):
             if current_score > best_score + delta:
                 best_epoch = epoch + 1
                 best_score = current_score
-                best_model_state = self.model.state_dict()
+                best_model_state = copy.deepcopy(self.model.state_dict())
                 counter = 0
             else:
                 counter += 1
@@ -173,6 +182,7 @@ class Loop(nn.Module):
 
     def _tst_epoch(self, tst_loader, n_epochs, epoch):
         self.model.eval()
+        
         self.metric.reset()
 
         iter_obj = tqdm(
@@ -181,7 +191,7 @@ class Loop(nn.Module):
         )
 
         for videos, labels in iter_obj:
-            videos=[v.to(self.device) for v in videos]
+            videos = [v.to(self.device) for v in videos]
             labels = labels.to(self.device)
             preds = self.model.predict(videos)
             self.metric.update(preds, labels)
@@ -198,3 +208,92 @@ class Loop(nn.Module):
         self.scaler.step(self.optimizer)
         self.scaler.update()
         self.optimizer.zero_grad()
+
+
+
+class PredictionLoop(nn.Module):
+    def __init__(
+        self, 
+        model, 
+        threshold: float=0.5,
+    ):
+        super(PredictionLoop, self).__init__()
+        # device setting
+        DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = torch.device(DEVICE)
+
+        # global attr
+        self.model = model.to(self.device)
+        self.threshold = threshold
+
+        # Metric
+        self.accuracy = BinaryAccuracy(threshold=self.threshold)
+        self.precision = BinaryPrecision(threshold=self.threshold)
+        self.recall = BinaryRecall(threshold=self.threshold)
+        self.f1 = BinaryF1Score(threshold=self.threshold)
+        self.confmat = BinaryConfusionMatrix(threshold=self.threshold)
+
+        self.accuracy.to(self.device)
+        self.precision.to(self.device)
+        self.recall.to(self.device)
+        self.f1.to(self.device)
+        self.confmat.to(self.device)
+
+
+    def predict(self, tst_loader):
+        self.model.eval()
+
+        self.accuracy.reset()
+        self.precision.reset()
+        self.recall.reset()
+        self.f1.reset()
+        self.confmat.reset()
+
+        iter_obj = tqdm(
+            iterable=tst_loader, 
+            desc=f"PREDICTION",
+        )
+
+        for videos, labels in iter_obj:
+            videos = [v.to(self.device) for v in videos]
+            labels = labels.to(self.device)
+            preds = self.model.predict(videos)
+
+            self.accuracy.update(preds, labels)
+            self.precision.update(preds, labels)
+            self.recall.update(preds, labels)
+            self.f1.update(preds, labels)
+            self.confmat.update(preds, labels)
+
+        print(
+            f"ACC:\t{self.accuracy.compute().item():.4f}",
+            f"PRE:\t{self.precision.compute().item():.4f}",
+            f"REC:\t{self.recall.compute().item():.4f}",
+            f"F1:\t{self.f1.compute().item():.4f}",
+            sep="\n",
+        )
+
+        self._vis_confmat()
+
+    def _vis_confmat(self):
+        scores = self.confmat.compute().cpu().numpy()
+
+        plt.figure(figsize=(5, 4))
+        
+        sns.heatmap(
+            data=scores, 
+            annot=True, 
+            fmt='d', 
+            cmap='Blues', 
+            cbar=False,
+            xticklabels=["Pred 0", "Pred 1"],
+            yticklabels=["True 0", "True 1"],
+        )
+        
+        plt.xlabel("Predicted Label")
+        plt.ylabel("True Label")
+        plt.title("Binary Confusion Matrix")
+        
+        plt.tight_layout()
+        
+        plt.show()
